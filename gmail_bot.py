@@ -4,24 +4,18 @@ Requires a Gmail app password. Does not access the VK API.
 """
 from __future__ import annotations
 
-import email
 import hashlib
-import html
 import imaplib
 import logging
 import os
-import re
 import sqlite3
 import threading
 import time
 from datetime import datetime
-from email import policy
-from email.utils import parseaddr
-from urllib.parse import parse_qs, urlencode, urlsplit
 
 import requests
-from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from vk_mail_parser import extract_messages as parse_vk_mail
 
 load_dotenv()
 LOG = logging.getLogger("vk-notify")
@@ -37,57 +31,8 @@ API_URL = "https://api.telegram.org/bot" + TG_TOKEN + "/"
 STATE = {"check": "ещё не проверено", "error": "", "count": 0}
 
 
-def clean_vk_link(link: str) -> str | None:
-    """Unwrap VK email tracking links without clicking them."""
-    url = urlsplit(link or "")
-    if url.scheme != "https" or url.hostname not in ("vk.ru", "vk.com", "m.vk.ru", "m.vk.com"):
-        return None
-    if url.path == "/email.php":
-        target = parse_qs(url.query).get("u", [""])[0]
-        return clean_vk_link(target) if target and target != link else None
-    if url.path == "/im":
-        q = parse_qs(url.query)
-        fields = [(key, q[key][0]) for key in ("sel", "msgid", "cmid") if q.get(key)]
-        return "https://vk.com/im?" + urlencode(fields) if fields else None
-    if url.path.startswith("/email") or url.path in ("", "/"):
-        return None
-    return "https://vk.com" + url.path
-
-
 def extract_messages(data: bytes) -> list[dict]:
-    mail = email.message_from_bytes(data, policy=policy.default)
-    if parseaddr(mail.get("From", ""))[1].lower() != VK_SENDER:
-        return []
-    part = mail.get_body(preferencelist=("html",))
-    if part is None:
-        return []
-    soup = BeautifulSoup(part.get_content(), "html.parser")
-    parsed = []
-    sender = "Пользователь ВКонтакте"
-    for a in soup.find_all("a", href=True):
-        target = clean_vk_link(a.get("href", ""))
-        if not target:
-            continue
-        caption = a.get_text(" ", strip=True)
-        if not caption:
-            continue
-        if urlsplit(target).path == "/im":
-            if not (("msgid=" in target) or ("cmid=" in target)):
-                continue
-            timestamp = ""
-            for node in (a.parent, getattr(a.parent, "parent", None)):
-                if node is None:
-                    continue
-                match = re.search(r"\d{1,2}\s+[а-яё]{3,}\s+в\s+\d{1,2}:\d{2}",
-                                  node.get_text(" ", strip=True), re.I)
-                if match:
-                    timestamp = match.group(0)
-                    break
-            parsed.append({"sender": sender, "text": caption, "url": target, "time": timestamp})
-        elif (urlsplit(target).path not in ("/settings", "/feed")
-              and len(caption) < 140):
-            sender = caption
-    return parsed
+    return parse_vk_mail(data, sender=VK_SENDER)
 
 
 def telegram(method: str, **kwargs):

@@ -1,5 +1,8 @@
 # VK Notify — серверный вариант через Gmail (Bothost)
 
+Исправление разбора Gmail, ограничения и безопасное обновление с откатом:
+[PARSER_ROLLOUT.md](PARSER_ROLLOUT.md). Все автономные тесты: `python -m unittest discover -v`.
+
 Используйте **gmail_bot.py** в качестве главного файла на Bothost (Python 3.11).
 Этот режим читает уведомления, которые VK прислал в Gmail, а не личные
 сообщения напрямую из API ВКонтакте. Уведомления могут приходить с задержкой;
@@ -115,7 +118,7 @@ python3 -m venv .venv
 ## Проверка кода
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m unittest discover -v
 ```
 
 Тесты проверяют построение ссылок, отображение отправителей, экранирование текста, повторную отправку и выбор вложений. Тесты не заменяют проверку с **вашим** действующим VK API-токеном.
