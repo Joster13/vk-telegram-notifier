@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# VK Notify local state
+*.sqlite3
+*.sqlite3-*
