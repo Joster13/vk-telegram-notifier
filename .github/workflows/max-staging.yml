@@ -21,3 +21,8 @@ jobs:
         run: python -m unittest -v test_combined.py
       - name: Test pinned Docker build
         run: docker build --progress=plain -t vk-max-staging:${{ github.sha }} .
+      - name: Smoke test startup with Bothost-style bind mount
+        run: |
+          mkdir -p data
+          docker run --rm -v "$PWD:/app" vk-max-staging:${{ github.sha }} \
+            python -c "import os; from pathlib import Path; assert os.geteuid() != 0; assert Path('/opt/max2tg/app/main.py').is_file(); assert Path('/app/run_combined.py').is_file(); print('bothost bind mount smoke test passed')"
