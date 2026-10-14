@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Validate Python syntax
-        run: python -m compileall -q run_combined.py gmail_bot.py max_notify_format.py patch_max_client.py test_combined.py test_max_format.py
+        run: python -m compileall -q run_combined.py run_bridge.py gmail_bot.py max_notify_format.py patch_max_client.py max_native_media.py max_replies.py max_reply_store.py
       - name: Test launcher
         run: |
           python -m pip install -r requirements.txt
@@ -28,3 +28,5 @@ jobs:
           mkdir -p data
           docker run --rm -v "$PWD:/app" vk-max-staging:${{ github.sha }} \
             python -c "import os; from pathlib import Path; assert os.geteuid() != 0; assert Path('/opt/max2tg/app/main.py').is_file(); assert Path('/app/run_combined.py').is_file(); print('bothost bind mount smoke test passed')"
+          docker run --rm -v "$PWD:/app" vk-max-staging:${{ github.sha }} \
+            python -c "import sys; sys.path.insert(0, '/opt/max2tg'); import run_bridge; from app import max_listener, dragon_notify_format; assert max_listener._header is dragon_notify_format.format_header; print('reply bridge imports and upstream patch passed')"

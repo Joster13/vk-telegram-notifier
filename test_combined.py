@@ -55,8 +55,8 @@ class CombinedLauncherTests(unittest.TestCase):
             specs = app.service_specs({
                 **self.env, "MAX_TOKEN": "fake_for_test", "MAX_DEVICE_ID": "device_for_test"
             })
-        self.assertEqual(set(specs), {"gmail", "max"})
-        self.assertEqual(specs["max"][0][1:], ["-u", "-m", "app.main"])
+        self.assertEqual(set(specs), {"bridge"})
+        self.assertTrue(specs["bridge"][0][-1].endswith("run_bridge.py"))
 
 
 if __name__ == "__main__":

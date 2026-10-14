@@ -34,7 +34,7 @@ class MaxFormatTests(unittest.TestCase):
         source = OLD_HEADER + "\n" + OLD_KEYBOARD
         result = patch_source(source)
         self.assertIn("format_header as _header", result)
-        self.assertIn("else open_max_keyboard()", result)
+        self.assertIn("else notification_keyboard(msg, sender_label, chat_label, is_dm)", result)
         with self.assertRaises(RuntimeError):
             patch_source(result)
         with self.assertRaises(RuntimeError):

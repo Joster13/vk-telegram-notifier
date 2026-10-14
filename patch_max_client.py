@@ -16,9 +16,9 @@ def patch_source(source):
     if source.count(OLD_HEADER) != 1 or source.count(OLD_KEYBOARD) != 1:
         raise RuntimeError("Pinned MAX listener changed; refusing an unverified patch")
     source = source.replace(OLD_HEADER,
-        "from app.dragon_notify_format import format_header as _header, open_max_keyboard")
+        "from app.dragon_notify_format import format_header as _header, notification_keyboard")
     return source.replace(OLD_KEYBOARD,
-        "kb = reply_keyboard(msg.chat_id) if reply_enabled else open_max_keyboard()")
+        "kb = reply_keyboard(msg.chat_id) if reply_enabled else notification_keyboard(msg, sender_label, chat_label, is_dm)")
 
 
 def main(root):

@@ -1,7 +1,7 @@
 """Run VK/Gmail and MAX->Telegram in one Bothost container.
 
 MAX adapter is pinned to an upstream Git commit by the Docker build.
-Only the VK/Gmail process consumes Telegram getUpdates; MAX is send-only.
+With MAX configured, one bridge process handles both sources and Telegram updates.
 """
 from __future__ import annotations
 
@@ -27,8 +27,7 @@ def _stop(_signum, _frame):
 
 def prepare_environment() -> dict[str, str]:
     env = dict(os.environ)
-    # The upstream MAX tool should NEVER start a second Telegram getUpdates
-    # consumer: gmail_bot.py is the sole command receiver.
+    # Upstream polling stays disabled. Our bridge owns the single getUpdates loop.
     env["REPLY_ENABLED"] = "false"
     env["DEBUG"] = "false"
     env["TG_BOT_TOKEN"] = env.get("TG_BOT_TOKEN") or env.get("BOT_TOKEN", "")
@@ -60,7 +59,7 @@ def service_specs(env: dict[str, str]) -> dict[str, tuple[list[str], Path]]:
     elif max_token and device:
         if not (MAX_ROOT / "app" / "main.py").is_file():
             raise RuntimeError("MAX client not installed in Docker image")
-        result["max"] = ([sys.executable, "-u", "-m", "app.main"], MAX_ROOT)
+        result = {"bridge": ([sys.executable, "-u", str(ROOT / "run_bridge.py")], ROOT)}
     else:
         LOG.info("MAX disabled until both credentials are configured")
     return result
