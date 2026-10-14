@@ -24,6 +24,6 @@ RUN chmod 0755 /usr/local/bin/vk-max-entrypoint
 RUN addgroup --system notifier \
     && adduser --system --ingroup notifier --home /app --no-create-home notifier \
     && mkdir -p /app/data /tmp/max2tg-logs \
-    && chown -R notifier:notifier /app /tmp/max2tg-logs \
+    && chown -R notifier:notifier /app /tmp/max2tg-logs
 ENTRYPOINT ["/usr/local/bin/vk-max-entrypoint"]
 CMD ["python", "-u", "run_combined.py"]
