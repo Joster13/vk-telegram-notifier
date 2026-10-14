@@ -18,10 +18,12 @@ COPY --from=max-source /vendor/max2tg/requirements.txt /tmp/max-requirements.txt
 RUN python -m pip install --no-cache-dir -r /tmp/vk-requirements.txt -r /tmp/max-requirements.txt
 COPY --from=max-source /vendor/max2tg /opt/max2tg
 COPY . /app
+# Bothost may bind-mount Git sources over /app; keep entrypoint outside /app.
+COPY entrypoint.sh /usr/local/bin/vk-max-entrypoint
+RUN chmod 0755 /usr/local/bin/vk-max-entrypoint
 RUN addgroup --system notifier \
     && adduser --system --ingroup notifier --home /app --no-create-home notifier \
     && mkdir -p /app/data /tmp/max2tg-logs \
     && chown -R notifier:notifier /app /tmp/max2tg-logs \
-    && chmod 0755 /app/entrypoint.sh
-ENTRYPOINT ["/app/entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/vk-max-entrypoint"]
 CMD ["python", "-u", "run_combined.py"]
