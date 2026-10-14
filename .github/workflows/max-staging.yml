@@ -1,0 +1,23 @@
+name: MAX staging validation
+on:
+  push:
+    branches: [feature/max-notifications-staging]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate Python syntax
+        run: python -m compileall -q run_combined.py gmail_bot.py test_combined.py
+      - name: Test launcher
+        run: python -m unittest -v test_combined.py
+      - name: Test pinned Docker build
+        run: docker build --progress=plain -t vk-max-staging:${{ github.sha }} .
