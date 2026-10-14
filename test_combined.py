@@ -41,7 +41,7 @@ class CombinedLauncherTests(unittest.TestCase):
         with mock.patch.object(app, "ROOT", self.root):
             specs = app.service_specs(dict(self.env))
         self.assertEqual(set(specs), {"gmail"})
-        self.assertTrue(specs["gmail"][0][1].endswith("gmail_bot.py"))
+        self.assertTrue(specs["gmail"][0][2].endswith("gmail_bot.py"))
 
     def test_partial_max_credentials_does_not_launch_max(self):
         with mock.patch.object(app, "ROOT", self.root):
