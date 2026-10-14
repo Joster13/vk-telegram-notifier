@@ -54,6 +54,57 @@ def clean_vk_link(link: str) -> str | None:
     return "https://vk.com" + url.path
 
 
+MAIL_TIME = re.compile(r"\d{1,2}\s+[а-яё]{3,}\.?\s+в\s+\d{1,2}:\d{2}", re.I)
+MAIL_ACTIONS = {"ответить", "показать полностью...", "показать полностью…", "показать все"}
+NO_MAIL_TEXT = "Текст сообщения не включён в письмо. Открой ВК по кнопке ниже."
+
+
+def _mail_text(node, *, remove_actions=False):
+    """Read visible message content, including emoji stored as inline images."""
+    fragment = BeautifulSoup(str(node), "html.parser")
+    truncated = False
+    for tag in list(fragment.find_all(True)):
+        if tag.parent is None:
+            continue
+        style = re.sub(r"\s+", "", tag.get("style", "")).lower()
+        if tag.name in ("script", "style") or "display:none" in style or tag.has_attr("hidden"):
+            tag.decompose()
+        elif tag.name == "a" and remove_actions:
+            target = clean_vk_link(tag.get("href", ""))
+            caption = tag.get_text(" ", strip=True).casefold()
+            if target and urlsplit(target).path == "/im" and caption in MAIL_ACTIONS:
+                truncated |= caption.startswith("показать полностью")
+                tag.decompose()
+        elif tag.name == "img":
+            tag.replace_with(tag.get("alt", ""))
+        elif tag.name == "br":
+            tag.replace_with("\n")
+    for tag in fragment.find_all(("p", "div", "li")):
+        tag.insert_before("\n")
+        tag.insert_after("\n")
+    lines = [re.sub(r"[^\S\n]+", " ", line).strip()
+             for line in fragment.get_text().splitlines()]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip(), truncated
+
+
+def _mail_sender(header):
+    for anchor in header.find_all("a", href=True):
+        target = clean_vk_link(anchor["href"])
+        name = anchor.get_text(" ", strip=True)
+        if (target and urlsplit(target).path not in ("/im", "/settings", "/feed")
+                and name and not name.startswith(("http://", "https://"))):
+            return name
+    return "Пользователь ВКонтакте"
+
+
+def _mail_timestamp(card):
+    for tag in card.find_all(("td", "span", "a")):
+        text = tag.get_text(" ", strip=True)
+        if MAIL_TIME.fullmatch(text):
+            return text
+    return ""
+
+
 def extract_messages(data: bytes) -> list[dict]:
     mail = email.message_from_bytes(data, policy=policy.default)
     if parseaddr(mail.get("From", ""))[1].lower() != VK_SENDER:
@@ -62,32 +113,48 @@ def extract_messages(data: bytes) -> list[dict]:
     if part is None:
         return []
     soup = BeautifulSoup(part.get_content(), "html.parser")
-    parsed = []
-    sender = "Пользователь ВКонтакте"
+    parsed = {}
     for a in soup.find_all("a", href=True):
         target = clean_vk_link(a.get("href", ""))
-        if not target:
+        if (not target or urlsplit(target).path != "/im"
+                or not any(parse_qs(urlsplit(target).query).get(k) for k in ("msgid", "cmid"))):
             continue
         caption = a.get_text(" ", strip=True)
-        if not caption:
+        if not caption or target in parsed:
             continue
-        if urlsplit(target).path == "/im":
-            if not (("msgid=" in target) or ("cmid=" in target)):
+        header = a.find_parent("table")
+        if header is None:
+            continue
+        anchor_row = a.find_parent("tr")
+        is_date_header = (MAIL_TIME.fullmatch(caption) and anchor_row is not None
+                          and anchor_row.find_previous_sibling("tr") is not None)
+        if is_date_header:
+            # Single-message mail: the linked date is in the header table.
+            # The actual text lives in the following row of the enclosing card.
+            row = header.find_parent("tr")
+            body = row.find_next_sibling("tr") if row is not None else None
+            if body is None:
                 continue
-            timestamp = ""
-            for node in (a.parent, getattr(a.parent, "parent", None)):
-                if node is None:
-                    continue
-                match = re.search(r"\d{1,2}\s+[а-яё]{3,}\s+в\s+\d{1,2}:\d{2}",
-                                  node.get_text(" ", strip=True), re.I)
-                if match:
-                    timestamp = match.group(0)
-                    break
-            parsed.append({"sender": sender, "text": caption, "url": target, "time": timestamp})
-        elif (urlsplit(target).path not in ("/settings", "/feed")
-              and len(caption) < 140):
-            sender = caption
-    return parsed
+            text, truncated = _mail_text(body, remove_actions=True)
+            stamp = caption
+        else:
+            # Digest mail: each message has its own small table containing
+            # its sender, preview link and a separate date row.
+            preceding = " ".join(reversed([
+                sibling.get_text(" ", strip=True) if hasattr(sibling, "get_text") else str(sibling)
+                for sibling in a.previous_siblings])).strip()
+            if not re.search(r"отправил[ао]?\s+вам(?:\s+сообщение)?$", preceding, re.I):
+                continue
+            stamp = _mail_timestamp(header)
+            if not stamp:
+                continue
+            text, truncated = _mail_text(a)
+            if (caption.casefold() == "сообщение"
+                    and re.search(r"отправил[ао]?\s+вам$", preceding, re.I)):
+                text = ""
+        parsed[target] = {"sender": _mail_sender(header), "text": text or NO_MAIL_TEXT,
+                          "url": target, "time": stamp, "truncated": truncated}
+    return list(parsed.values())
 
 
 def telegram(method: str, **kwargs):
@@ -144,6 +211,8 @@ def forward_mail(db, raw):
         if item["time"]:
             body += "\nВремя: " + item["time"]
         body += "\n\n" + item["text"]
+        if item.get("truncated"):
+            body += "\n\nВ письме показана только часть сообщения — полностью в ВК."
         send(body, item["url"])
         db.execute("INSERT INTO sent (hash) VALUES (?)", (fingerprint,))
         db.commit()
