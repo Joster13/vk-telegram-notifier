@@ -16,9 +16,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Validate Python syntax
-        run: python -m compileall -q run_combined.py gmail_bot.py test_combined.py
+        run: python -m compileall -q run_combined.py gmail_bot.py max_notify_format.py patch_max_client.py test_combined.py test_max_format.py
       - name: Test launcher
-        run: python -m unittest -v test_combined.py
+        run: python -m unittest -v test_combined.py test_max_format.py
       - name: Test pinned Docker build
         run: docker build --progress=plain -t vk-max-staging:${{ github.sha }} .
       - name: Smoke test startup with Bothost-style bind mount

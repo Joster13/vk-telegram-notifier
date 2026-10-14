@@ -18,6 +18,7 @@ COPY --from=max-source /vendor/max2tg/requirements.txt /tmp/max-requirements.txt
 RUN python -m pip install --no-cache-dir -r /tmp/vk-requirements.txt -r /tmp/max-requirements.txt
 COPY --from=max-source /vendor/max2tg /opt/max2tg
 COPY . /app
+RUN python /app/patch_max_client.py /opt/max2tg
 # Bothost may bind-mount Git sources over /app; keep entrypoint outside /app.
 COPY entrypoint.sh /usr/local/bin/vk-max-entrypoint
 RUN chmod 0755 /usr/local/bin/vk-max-entrypoint
