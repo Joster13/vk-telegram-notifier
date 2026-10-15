@@ -2,6 +2,8 @@ name: MAX staging validation
 on:
   push:
     branches: [feature/max-notifications-staging, fix/bothost-entrypoint]
+  pull_request:
+    branches: [fix/bothost-entrypoint]
   workflow_dispatch:
 
 permissions:
@@ -19,6 +21,7 @@ jobs:
         run: python -m compileall -q run_combined.py run_bridge.py gmail_bot.py max_notify_format.py patch_max_client.py max_native_media.py max_replies.py max_reply_store.py
       - name: Test launcher
         run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
           python -m pip install -r requirements.txt
           python -m unittest discover -v
       - name: Test pinned Docker build
