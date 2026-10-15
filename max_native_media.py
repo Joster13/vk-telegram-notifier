@@ -6,10 +6,14 @@ No second session, third-party upload service, or Telegram file URL is used.
 """
 import asyncio
 import json
+import logging
+import os
 import time
 from urllib.parse import quote, urlsplit
 
 import aiohttp
+
+LOG = logging.getLogger("dragon-replies")
 
 
 class MaxRejected(RuntimeError):
@@ -18,6 +22,31 @@ class MaxRejected(RuntimeError):
 
 class UploadFailed(RuntimeError):
     pass
+
+
+async def prepare_voice(data):
+    """Normalize Telegram recordings for MAX without saving private audio to disk."""
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+            "-i", "pipe:0", "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "48000",
+            "-c:a", "libopus", "-b:a", "32k", "-f", "ogg", "pipe:1",
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            **({"creationflags": 0x08000000} if os.name == "nt" else {}))
+    except OSError as exc:
+        raise UploadFailed("Voice converter is unavailable") from exc
+    try:
+        converted, _ = await asyncio.wait_for(process.communicate(data), 90)
+    finally:
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+    if process.returncode or not converted.startswith(b"OggS"):
+        raise UploadFailed("Voice conversion failed")
+    if len(converted) > 20 * 1024 * 1024:
+        raise UploadFailed("Converted voice is too large")
+    return converted
 
 
 class NativeTransport:
@@ -62,6 +91,12 @@ class NativeTransport:
             except MaxRejected as exc:
                 exc.opcode = opcode
                 raise
+            except asyncio.CancelledError:
+                # Upstream cancels pending futures on disconnect. Keep actual
+                # task cancellation intact, but report a lost socket to the owner.
+                if not asyncio.current_task().cancelling():
+                    raise ConnectionError("MAX disconnected before confirmation") from None
+                raise
             if not response:
                 raise MaxRejected("empty response")
             return response
@@ -78,15 +113,16 @@ class NativeTransport:
                            for d in ("oneme.ru", "okcdn.ru", "max.ru"))):
             raise UploadFailed("Unexpected MAX upload destination")
 
-    async def http_upload(self, url, data, filename, *, photo=False):
+    async def http_upload(self, url, data, filename, *, photo=False, voice=False):
         self.validate_url(url)
         session = self.client._session
         if session is None or session.closed:
             raise UploadFailed("MAX upload session is unavailable")
         headers = {}
-        if photo:
+        if photo or voice:
             body = aiohttp.FormData()
-            body.add_field("file", data, filename="photo.jpg", content_type="image/jpeg")
+            body.add_field("file", data, filename="voice.ogg" if voice else "photo.jpg",
+                           content_type="audio/ogg" if voice else "image/jpeg")
         else:
             body = data
             headers = {"Content-Disposition": "attachment; filename=" + quote(filename, safe=""),
@@ -96,15 +132,29 @@ class NativeTransport:
                                 timeout=aiohttp.ClientTimeout(total=300)) as response:
             raw = await response.read()
             if response.status != 200:
+                LOG.warning("MAX media upload HTTP status=%d", response.status)
                 raise UploadFailed("MAX upload failed")
-            if photo:
+            if photo or voice:
                 try:
-                    return json.loads(raw)
+                    result = json.loads(raw)
                 except (ValueError, UnicodeError) as exc:
-                    raise UploadFailed("Invalid MAX photo upload response") from exc
+                    raise UploadFailed("Invalid MAX media upload response") from exc
+                if not isinstance(result, dict):
+                    raise UploadFailed("Invalid MAX media upload response")
+                # MAX can reject the media while returning HTTP 200. Never
+                # attach an upload that the server has explicitly rejected.
+                if result.get("error") or result.get("error_code") not in (None, 0, "0"):
+                    code = str(result.get("error_data") or result.get("error_code") or "rejected")
+                    safe_code = code if code in {"AUDIO_VALIDATION_FAILED", "BAD_REQUEST"} else "other"
+                    LOG.warning("MAX media upload rejected (code=%s)", safe_code)
+                    raise UploadFailed("MAX rejected media upload")
+                return result
         return {}
 
     async def upload_native(self, kind, data, filename, duration=0):
+        if kind == "voice":
+            data = await prepare_voice(data)
+            filename = "voice.ogg"
         payload = {"count": 1, "type": 2 if kind == "voice" else 0,
                    "uploaderType": 1 if kind == "voice" else 0, "profile": False}
         response = await self.request(80 if kind == "photo" else 82, payload)
@@ -119,18 +169,21 @@ class NativeTransport:
                 raise UploadFailed("Missing MAX photo token")
             return {"_type": "PHOTO", "photoToken": token}
         slots = response.get("info") or []
-        if not slots or not all(slots[0].get(k) for k in ("url", "videoId", "token")):
+        required = ("url", "videoId") if kind == "voice" else ("url", "videoId", "token")
+        if not slots or not all(slots[0].get(k) for k in required):
             raise UploadFailed("Missing MAX media upload slot")
         slot = slots[0]
+        if kind == "voice":
+            await self.http_upload(slot["url"], data, filename, voice=True)
+            # The upload slot's videoId identifies the AUDIO. A video token
+            # sends MAX down the video resolution path (video.not.ready).
+            # Omit optional waveform data: Telegram does not supply it and a
+            # NUL-filled JSON string is not a binary waveform.
+            return {"_type": "AUDIO", "audioId": slot["videoId"],
+                    "duration": int(duration * 1000)}
         media_id = str(slot["videoId"])
         event = self.ready.setdefault(media_id, asyncio.Event())
         await self.http_upload(slot["url"], data, filename)
-        if kind == "voice":
-            # MAX's voice attachment also carries an 80-byte waveform.  The
-            # reference client uses zero samples when Telegram supplies no
-            # waveform in its voice object.
-            return {"_type": "AUDIO", "token": slot["token"],
-                    "duration": int(duration * 1000), "wave": "\x00" * 80}
         try:
             await asyncio.wait_for(event.wait(), 60)
         except asyncio.TimeoutError as exc:
@@ -159,7 +212,9 @@ class NativeTransport:
                 if kind in ("photo", "video", "voice"):
                     try:
                         attach = await self.upload_native(kind, data, filename, duration)
-                    except (UploadFailed, MaxRejected, asyncio.TimeoutError):
+                    except (UploadFailed, MaxRejected, asyncio.TimeoutError) as exc:
+                        LOG.warning("MAX native %s upload failed (%s); trying file fallback",
+                                    kind, type(exc).__name__)
                         # No message has been sent yet: a file fallback is safe.
                         attach = await self.client.upload_file(data, filename)
                         degraded = True

@@ -11,7 +11,7 @@ RUN git clone --quiet https://github.com/Aist/max2tg.git /vendor/max2tg \
 FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends gosu ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends gosu ca-certificates ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt /tmp/vk-requirements.txt
 COPY --from=max-source /vendor/max2tg/requirements.txt /tmp/max-requirements.txt

@@ -1,11 +1,18 @@
 import asyncio
+import io
 from pathlib import Path
+import shutil
 import tempfile
 from types import SimpleNamespace as NS
 import unittest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
+import wave
 
-from max_native_media import MaxRejected, NativeTransport, UploadFailed
+import aiohttp
+from aiohttp import web
+from aiohttp.test_utils import TestServer
+
+from max_native_media import MaxRejected, NativeTransport, UploadFailed, prepare_voice
 from max_replies import MAX_DOWNLOAD_BYTES, ReplyController
 from max_reply_store import ReplyStore
 import max_notify_format as fmt
@@ -125,6 +132,10 @@ class NativeMediaTests(unittest.IsolatedAsyncioTestCase):
         self.client = NS(_handle=AsyncMock(), _ws=NS(closed=False), _seq=0, _pending={},
                          upload_file=AsyncMock(return_value={"_type": "FILE", "fileId": 77}))
         self.transport = NativeTransport(self.client)
+        converter = patch("max_native_media.prepare_voice", new_callable=AsyncMock,
+                          return_value=b"normalized-ogg")
+        self.converter = converter.start()
+        self.addCleanup(converter.stop)
 
     async def test_request_registers_future_before_fast_response(self):
         async def send(opcode, payload):
@@ -159,6 +170,29 @@ class NativeMediaTests(unittest.IsolatedAsyncioTestCase):
             await self.transport.request(64, {})
         self.assertNotIn("SECRET", str(caught.exception))
 
+    async def test_disconnected_pending_request_becomes_connection_error(self):
+        async def send(opcode, payload):
+            seq = self.client._seq
+            self.client._seq += 1
+            self.client._pending[seq].cancel()
+            return seq
+        self.client._send = send
+        with self.assertRaises(ConnectionError):
+            await self.transport.request(82, {})
+        self.assertEqual(self.client._pending, {})
+
+    async def test_shutdown_still_cancels_request_task(self):
+        async def send(opcode, payload):
+            seq = self.client._seq
+            self.client._seq += 1
+            asyncio.current_task().cancel()
+            return seq
+        self.client._send = send
+        task = asyncio.create_task(self.transport.request(82, {}))
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(self.client._pending, {})
+
     async def test_photo_uses_native_photo_token(self):
         self.transport.request = AsyncMock(return_value={"url": "https://iu.oneme.ru/upload"})
         self.transport.http_upload = AsyncMock(return_value={"photos": {"12": {"token": "photo-token"}}})
@@ -170,8 +204,10 @@ class NativeMediaTests(unittest.IsolatedAsyncioTestCase):
         self.transport.request = AsyncMock(return_value={"info": [{"url": "https://au.oneme.ru/upload", "videoId": 12, "token": "audio-token"}]})
         self.transport.http_upload = AsyncMock(return_value={})
         attach = await self.transport.upload_native("voice", b"OggS", "voice.ogg", 3)
-        self.assertEqual(attach, {"_type": "AUDIO", "token": "audio-token", "duration": 3000,
-                                  "wave": "\x00" * 80})
+        self.assertEqual(attach, {"_type": "AUDIO", "audioId": 12, "duration": 3000})
+        self.converter.assert_awaited_once_with(b"OggS")
+        self.transport.http_upload.assert_awaited_once_with(
+            "https://au.oneme.ru/upload", b"normalized-ogg", "voice.ogg", voice=True)
         self.assertEqual(self.transport.request.call_args.args[1]["type"], 2)
         self.assertEqual(self.transport.request.call_args.args[1]["uploaderType"], 1)
 
@@ -218,6 +254,82 @@ class NativeMediaTests(unittest.IsolatedAsyncioTestCase):
         for url in ("http://iu.oneme.ru/upload", "https://oneme.ru.evil.test/upload", "https://localhost/upload", "https://u:p@iu.oneme.ru/upload"):
             with self.assertRaises(UploadFailed):
                 self.transport.validate_url(url)
+
+
+class VoiceUploadHttpTests(unittest.IsolatedAsyncioTestCase):
+    async def start_server(self, handler):
+        app = web.Application()
+        app.router.add_post("/upload", handler)
+        server = TestServer(app)
+        await server.start_server()
+        self.addAsyncCleanup(server.close)
+        session = aiohttp.ClientSession()
+        self.addAsyncCleanup(session.close)
+        client = NS(_handle=AsyncMock(), _session=session)
+        transport = NativeTransport(client)
+        # Only the local test server bypasses the production host allowlist.
+        transport.validate_url = lambda url: None
+        return transport, str(server.make_url("/upload"))
+
+    async def test_voice_is_sent_as_an_ogg_multipart_file(self):
+        async def handler(request):
+            self.assertEqual(request.content_type, "multipart/form-data")
+            self.assertNotIn("Content-Range", request.headers)
+            form = await request.multipart()
+            part = await form.next()
+            self.assertEqual(part.name, "file")
+            self.assertEqual(part.filename, "voice.ogg")
+            self.assertEqual(part.headers["Content-Type"], "audio/ogg")
+            self.assertEqual(await part.read(), b"normalized-ogg")
+            return web.json_response({"error_code": "0"})
+        transport, url = await self.start_server(handler)
+        await transport.http_upload(url, b"normalized-ogg", "voice.ogg", voice=True)
+
+    async def test_http_200_validation_error_never_becomes_an_audio_message(self):
+        async def handler(request):
+            return web.json_response({"error_code": "1", "error_data": "AUDIO_VALIDATION_FAILED",
+                                      "token": "PRIVATE"})
+        transport, url = await self.start_server(handler)
+        transport.request = AsyncMock(return_value={"info": [{
+            "url": url, "videoId": 12, "token": "video-token"}]})
+        with patch("max_native_media.prepare_voice", AsyncMock(return_value=b"ogg")):
+            with self.assertLogs("dragon-replies", level="WARNING") as logs:
+                with self.assertRaises(UploadFailed):
+                    await transport.upload_native("voice", b"input", "voice.ogg", 3)
+        self.assertIn("AUDIO_VALIDATION_FAILED", str(logs.output))
+        self.assertNotIn("PRIVATE", str(logs.output))
+        self.assertEqual(transport.request.call_count, 1)
+        self.assertEqual(transport.request.call_args.args[0], 82)
+
+    async def test_malformed_http_200_response_is_not_success(self):
+        async def handler(request):
+            return web.Response(text="BAD_REQUEST")
+        transport, url = await self.start_server(handler)
+        with self.assertRaises(UploadFailed):
+            await transport.http_upload(url, b"ogg", "voice.ogg", voice=True)
+
+
+@unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg is required for voice conversion")
+class VoiceConversionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stereo_recording_becomes_mono_48khz_opus_ogg(self):
+        # Synthetic audio only; no user recordings are stored in fixtures.
+        source = io.BytesIO()
+        with wave.open(source, "wb") as recording:
+            recording.setnchannels(2)
+            recording.setsampwidth(2)
+            recording.setframerate(44100)
+            recording.writeframes(b"\x00\x01" * 2 * 4410)
+        converted = await prepare_voice(source.getvalue())
+        header = converted.index(b"OpusHead")
+        self.assertEqual(converted[header + 9], 1)
+        self.assertEqual(int.from_bytes(converted[header + 12:header + 16], "little"), 48000)
+
+    async def test_invalid_recording_fails_before_requesting_an_upload_slot(self):
+        transport = NativeTransport(NS(_handle=AsyncMock()))
+        transport.request = AsyncMock()
+        with self.assertRaises(UploadFailed):
+            await transport.upload_native("voice", b"not-a-recording", "voice.ogg", 3)
+        transport.request.assert_not_called()
 
 
 class NotificationButtonTests(unittest.TestCase):
