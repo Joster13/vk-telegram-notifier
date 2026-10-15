@@ -37,6 +37,21 @@ class CombinedLauncherTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "TG_BOT_TOKEN"):
                 app.prepare_environment()
 
+    def test_persistent_muted_chats_merge_with_existing_exclusions(self):
+        (self.root / "data").mkdir()
+        (self.root / "data" / "max_muted_chats.json").write_text("[-123, -456]")
+        with mock.patch.object(app, "ROOT", self.root), mock.patch.dict(os.environ,
+                {**self.env, "MAX_EXCLUDE_CHAT_IDS": "-123, 789"}, clear=True):
+            result = app.prepare_environment()
+        self.assertEqual(set(result["MAX_EXCLUDE_CHAT_IDS"].split(",")), {"-123", "-456", "789"})
+
+    def test_invalid_muted_configuration_does_not_silently_enable_notifications(self):
+        (self.root / "data").mkdir()
+        (self.root / "data" / "max_muted_chats.json").write_text('["bad"]')
+        with mock.patch.object(app, "ROOT", self.root), mock.patch.dict(os.environ, self.env, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "muted chats"):
+                app.prepare_environment()
+
     def test_gmail_runs_alone_without_max_credentials(self):
         with mock.patch.object(app, "ROOT", self.root):
             specs = app.service_specs(dict(self.env))

@@ -6,6 +6,7 @@ With MAX configured, one bridge process handles both sources and Telegram update
 from __future__ import annotations
 
 import logging
+import json
 import os
 import shutil
 import signal
@@ -32,6 +33,14 @@ def prepare_environment() -> dict[str, str]:
     env["DEBUG"] = "false"
     env["TG_BOT_TOKEN"] = env.get("TG_BOT_TOKEN") or env.get("BOT_TOKEN", "")
     env.setdefault("LOG_DIR", "/tmp/max2tg-logs")
+    # Local notification preferences survive Git updates without entering Git.
+    mute_file = Path(env.get("DATA_DIR", str(ROOT / "data"))) / "max_muted_chats.json"
+    muted = json.loads(mute_file.read_text()) if mute_file.exists() else []
+    if not isinstance(muted, list) or any(type(value) is not int for value in muted):
+        raise RuntimeError("Invalid MAX muted chats configuration")
+    excluded = {int(value.strip()) for value in env.get("MAX_EXCLUDE_CHAT_IDS", "").split(",") if value.strip()}
+    excluded.update(muted)
+    env["MAX_EXCLUDE_CHAT_IDS"] = ",".join(str(value) for value in sorted(excluded))
 
     required = ("TG_BOT_TOKEN", "TG_CHAT_ID", "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD")
     missing = [key for key in required if not env.get(key)]

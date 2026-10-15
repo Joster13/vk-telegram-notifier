@@ -32,7 +32,8 @@ async def main():
     dragon_notify_format.configure_replies(store.add_route)
     sender = TelegramSender(gmail_bot.TG_TOKEN, gmail_bot.CHAT_ID)
     client = max_listener.create_max_client(os.environ["MAX_TOKEN"], os.environ["MAX_DEVICE_ID"],
-                                           sender, reply_enabled=False)
+                                           sender, reply_enabled=False,
+                                           exclude_chat_ids=os.getenv("MAX_EXCLUDE_CHAT_IDS") or None)
     transport = NativeTransport(client)
     state = {"connected": False}
     health_path = Path("/tmp/dragon-notify-health.json")
@@ -41,6 +42,7 @@ async def main():
         temp = health_path.with_suffix(".tmp")
         temp.write_text(json.dumps({"max_connected": state["connected"],
                                    "telegram_consumers": 1, "replies_enabled": True,
+                                   "muted_chats": len(client.exclude_chat_ids),
                                    "native_media": ["PHOTO", "VIDEO", "AUDIO"]}))
         temp.replace(health_path)
 
