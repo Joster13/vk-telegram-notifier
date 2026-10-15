@@ -139,9 +139,13 @@ class NativeTransport:
         return {"_type": "VIDEO", "videoId": slot["videoId"], "token": slot["token"], "videoType": 0}
 
     async def send_confirmed(self, chat_id, text, attaches):
+        message = {"cid": time.time_ns() // 1000, "elements": [], "attaches": attaches}
+        # MAX's payload model excludes absent text. JSON null is not an
+        # absent field and can be rejected as proto.payload for media replies.
+        if text:
+            message["text"] = text
         response = await self.request(64, {"chatId": int(chat_id), "notify": True,
-            "message": {"text": text or None, "cid": time.time_ns() // 1000,
-                        "elements": [], "attaches": attaches}})
+                                          "message": message})
         message = response.get("message") or response
         if not isinstance(message, dict) or not message.get("id"):
             raise RuntimeError("MAX did not confirm a message ID")

@@ -137,9 +137,9 @@ class NativeMediaTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.transport.send_confirmed(7, "text", []), "ack")
         self.assertEqual(self.client._pending, {})
 
-    async def test_media_without_caption_uses_null_text(self):
+    async def test_media_without_caption_omits_text_like_max_payload_model(self):
         async def send(opcode, payload):
-            self.assertIsNone(payload["message"]["text"])
+            self.assertNotIn("text", payload["message"])
             seq = self.client._seq
             self.client._seq += 1
             self.client._pending[seq].set_result({"message": {"id": "ack"}})
