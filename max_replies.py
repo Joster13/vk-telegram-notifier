@@ -1,7 +1,11 @@
 """Owner-only Telegram reply handlers with explicit, persistent recipient binding."""
 import logging
+import re
 
+from aiohttp import ClientResponseError
 from telegram import ForceReply
+
+from max_native_media import MaxRejected
 
 LOG = logging.getLogger("dragon-replies")
 MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024
@@ -107,7 +111,15 @@ class ReplyController:
             _, degraded = await self.transport.deliver(route["chat_id"], text, **kwargs)
         except Exception as exc:
             self.store.finish(self.owner, message.message_id, "unconfirmed")
-            LOG.warning("MAX reply not confirmed (%s)", type(exc).__name__)
+            if isinstance(exc, MaxRejected):
+                code = str(exc)
+                safe_code = code if re.fullmatch(r"[a-z][a-z0-9._-]{0,80}", code) else "other"
+                LOG.warning("MAX reply rejected (opcode=%s, code=%s)",
+                            getattr(exc, "opcode", "unknown"), safe_code)
+            elif isinstance(exc, ClientResponseError):
+                LOG.warning("MAX upload HTTP status=%d", exc.status)
+            else:
+                LOG.warning("MAX reply not confirmed (%s)", type(exc).__name__)
             await message.reply_text("Не удалось подтвердить отправку в MAX. Проверь диалог перед повтором.\n"
                                      "Для повтора отправь новое сообщение ответом на ту же подсказку.")
             return

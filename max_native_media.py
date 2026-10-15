@@ -57,7 +57,11 @@ class NativeTransport:
         try:
             if await self.client._send(opcode, payload) != seq:
                 raise ConnectionError("MAX request was not sent")
-            response = await asyncio.wait_for(future, timeout)
+            try:
+                response = await asyncio.wait_for(future, timeout)
+            except MaxRejected as exc:
+                exc.opcode = opcode
+                raise
             if not response:
                 raise MaxRejected("empty response")
             return response
