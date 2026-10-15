@@ -206,6 +206,7 @@ class NativeMediaTests(unittest.IsolatedAsyncioTestCase):
         self.transport.http_upload = AsyncMock(return_value={})
         attach = await self.transport.upload_native("voice", b"OggS", "voice.ogg", 3)
         self.assertEqual(attach, {"_type": "AUDIO", "audioId": 12, "duration": 3000,
+                                  "token": "audio-token",
                                   "wave": base64.b64encode(bytes(80)).decode("ascii")})
         self.converter.assert_awaited_once_with(b"OggS")
         self.transport.http_upload.assert_awaited_once_with(
@@ -219,7 +220,7 @@ class NativeMediaTests(unittest.IsolatedAsyncioTestCase):
         self.transport.http_upload = AsyncMock(return_value={"audioId": 34})
         attach = await self.transport.upload_native("voice", b"ogg", "voice.ogg", 3)
         self.assertEqual(attach["audioId"], 34)
-        self.assertNotIn("token", attach)
+        self.assertEqual(attach["token"], "video-token")
         self.assertEqual(base64.b64decode(attach["wave"], validate=True), bytes(80))
 
     async def test_video_waits_for_processing_then_builds_video_attachment(self):

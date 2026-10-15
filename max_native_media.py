@@ -179,12 +179,15 @@ class NativeTransport:
             audio_id = result.get("audioId") or slot["videoId"]
             LOG.info("MAX voice upload accepted (audio_id_in_response=%s, slot_id_matches=%s)",
                      bool(result.get("audioId")), str(audio_id) == str(slot["videoId"]))
-            # The upload slot's videoId identifies the AUDIO. A video token
-            # sends MAX down the video resolution path (video.not.ready).
+            # The web client keeps audioId alongside the slot token. A token
+            # alone can be resolved as a video instead of the uploaded audio.
             # Binary waveform data must be base64 for the JSON transport.
-            return {"_type": "AUDIO", "audioId": int(audio_id),
-                    "duration": int(duration * 1000),
-                    "wave": base64.b64encode(bytes(80)).decode("ascii")}
+            attach = {"_type": "AUDIO", "audioId": int(audio_id),
+                      "duration": int(duration * 1000),
+                      "wave": base64.b64encode(bytes(80)).decode("ascii")}
+            if slot.get("token"):
+                attach["token"] = slot["token"]
+            return attach
         media_id = str(slot["videoId"])
         event = self.ready.setdefault(media_id, asyncio.Event())
         await self.http_upload(slot["url"], data, filename)
