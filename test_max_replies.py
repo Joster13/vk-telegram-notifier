@@ -137,6 +137,16 @@ class NativeMediaTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.transport.send_confirmed(7, "text", []), "ack")
         self.assertEqual(self.client._pending, {})
 
+    async def test_media_without_caption_uses_null_text(self):
+        async def send(opcode, payload):
+            self.assertIsNone(payload["message"]["text"])
+            seq = self.client._seq
+            self.client._seq += 1
+            self.client._pending[seq].set_result({"message": {"id": "ack"}})
+            return seq
+        self.client._send = send
+        self.assertEqual(await self.transport.send_confirmed(7, "", [{"_type": "AUDIO"}]), "ack")
+
     async def test_explicit_protocol_error_is_preserved_without_private_payload(self):
         async def send(opcode, payload):
             seq = self.client._seq
@@ -160,7 +170,8 @@ class NativeMediaTests(unittest.IsolatedAsyncioTestCase):
         self.transport.request = AsyncMock(return_value={"info": [{"url": "https://au.oneme.ru/upload", "videoId": 12, "token": "audio-token"}]})
         self.transport.http_upload = AsyncMock(return_value={})
         attach = await self.transport.upload_native("voice", b"OggS", "voice.ogg", 3)
-        self.assertEqual(attach, {"_type": "AUDIO", "token": "audio-token", "duration": 3000})
+        self.assertEqual(attach, {"_type": "AUDIO", "token": "audio-token", "duration": 3000,
+                                  "wave": "\x00" * 80})
         self.assertEqual(self.transport.request.call_args.args[1]["type"], 2)
         self.assertEqual(self.transport.request.call_args.args[1]["uploaderType"], 1)
 

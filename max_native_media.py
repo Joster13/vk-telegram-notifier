@@ -122,7 +122,11 @@ class NativeTransport:
         event = self.ready.setdefault(media_id, asyncio.Event())
         await self.http_upload(slot["url"], data, filename)
         if kind == "voice":
-            return {"_type": "AUDIO", "token": slot["token"], "duration": int(duration * 1000)}
+            # MAX's voice attachment also carries an 80-byte waveform.  The
+            # reference client uses zero samples when Telegram supplies no
+            # waveform in its voice object.
+            return {"_type": "AUDIO", "token": slot["token"],
+                    "duration": int(duration * 1000), "wave": "\x00" * 80}
         try:
             await asyncio.wait_for(event.wait(), 60)
         except asyncio.TimeoutError as exc:
@@ -132,7 +136,7 @@ class NativeTransport:
 
     async def send_confirmed(self, chat_id, text, attaches):
         response = await self.request(64, {"chatId": int(chat_id), "notify": True,
-            "message": {"text": text, "cid": time.time_ns() // 1000,
+            "message": {"text": text or None, "cid": time.time_ns() // 1000,
                         "elements": [], "attaches": attaches}})
         message = response.get("message") or response
         if not isinstance(message, dict) or not message.get("id"):
