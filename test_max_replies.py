@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import io
 from pathlib import Path
 import shutil
@@ -204,12 +205,22 @@ class NativeMediaTests(unittest.IsolatedAsyncioTestCase):
         self.transport.request = AsyncMock(return_value={"info": [{"url": "https://au.oneme.ru/upload", "videoId": 12, "token": "audio-token"}]})
         self.transport.http_upload = AsyncMock(return_value={})
         attach = await self.transport.upload_native("voice", b"OggS", "voice.ogg", 3)
-        self.assertEqual(attach, {"_type": "AUDIO", "audioId": 12, "duration": 3000})
+        self.assertEqual(attach, {"_type": "AUDIO", "audioId": 12, "duration": 3000,
+                                  "wave": base64.b64encode(bytes(80)).decode("ascii")})
         self.converter.assert_awaited_once_with(b"OggS")
         self.transport.http_upload.assert_awaited_once_with(
             "https://au.oneme.ru/upload", b"normalized-ogg", "voice.ogg", voice=True)
         self.assertEqual(self.transport.request.call_args.args[1]["type"], 2)
         self.assertEqual(self.transport.request.call_args.args[1]["uploaderType"], 1)
+
+    async def test_voice_uses_completed_upload_audio_id_when_present(self):
+        self.transport.request = AsyncMock(return_value={"info": [{
+            "url": "https://au.oneme.ru/upload", "videoId": 12, "token": "video-token"}]})
+        self.transport.http_upload = AsyncMock(return_value={"audioId": 34})
+        attach = await self.transport.upload_native("voice", b"ogg", "voice.ogg", 3)
+        self.assertEqual(attach["audioId"], 34)
+        self.assertNotIn("token", attach)
+        self.assertEqual(base64.b64decode(attach["wave"], validate=True), bytes(80))
 
     async def test_video_waits_for_processing_then_builds_video_attachment(self):
         self.transport.request = AsyncMock(return_value={"info": [{"url": "https://vu.okcdn.ru/upload", "videoId": 13, "token": "video-token"}]})

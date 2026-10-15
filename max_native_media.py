@@ -5,6 +5,7 @@ Protocol shapes checked against MaxApiTeam/PyMax upload service, commit
 No second session, third-party upload service, or Telegram file URL is used.
 """
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -174,13 +175,16 @@ class NativeTransport:
             raise UploadFailed("Missing MAX media upload slot")
         slot = slots[0]
         if kind == "voice":
-            await self.http_upload(slot["url"], data, filename, voice=True)
+            result = await self.http_upload(slot["url"], data, filename, voice=True)
+            audio_id = result.get("audioId") or slot["videoId"]
+            LOG.info("MAX voice upload accepted (audio_id_in_response=%s, slot_id_matches=%s)",
+                     bool(result.get("audioId")), str(audio_id) == str(slot["videoId"]))
             # The upload slot's videoId identifies the AUDIO. A video token
             # sends MAX down the video resolution path (video.not.ready).
-            # Omit optional waveform data: Telegram does not supply it and a
-            # NUL-filled JSON string is not a binary waveform.
-            return {"_type": "AUDIO", "audioId": slot["videoId"],
-                    "duration": int(duration * 1000)}
+            # Binary waveform data must be base64 for the JSON transport.
+            return {"_type": "AUDIO", "audioId": int(audio_id),
+                    "duration": int(duration * 1000),
+                    "wave": base64.b64encode(bytes(80)).decode("ascii")}
         media_id = str(slot["videoId"])
         event = self.ready.setdefault(media_id, asyncio.Event())
         await self.http_upload(slot["url"], data, filename)
@@ -205,6 +209,7 @@ class NativeTransport:
         return str(message["id"])
 
     async def deliver(self, chat_id, text, *, kind=None, data=None, filename="file", duration=0):
+        LOG.info("MAX reply attempt (kind=%s, bytes=%d)", kind or "text", len(data or b""))
         degraded = False
         attaches = []
         try:

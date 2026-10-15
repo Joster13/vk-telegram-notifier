@@ -20,7 +20,7 @@ async def main():
     os.umask(0o077)
     # Upstream INFO/WARNING messages can contain private previews or upload URLs.
     logging.basicConfig(level=logging.CRITICAL)
-    logging.getLogger("dragon-replies").setLevel(logging.WARNING)
+    logging.getLogger("dragon-replies").setLevel(logging.INFO)
     logging.getLogger("vk-notify").setLevel(logging.WARNING)
     log = logging.getLogger("dragon-bridge")
     log.setLevel(logging.INFO)
