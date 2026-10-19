@@ -1,9 +1,9 @@
 name: MAX staging validation
 on:
   push:
-    branches: [feature/max-notifications-staging, fix/bothost-entrypoint, fix/mute-max-family]
+    branches: [feature/max-notifications-staging, fix/bothost-entrypoint, fix/mute-max-family, fix/legacy-bothost-docker]
   pull_request:
-    branches: [fix/bothost-entrypoint]
+    branches: [fix/bothost-entrypoint, fix/mute-max-family]
   workflow_dispatch:
 
 permissions:
@@ -24,12 +24,14 @@ jobs:
           sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
           python -m pip install -r requirements.txt
           python -m unittest discover -v
-      - name: Test pinned Docker build
-        run: docker build --progress=plain -t vk-max-staging:${{ github.sha }} .
+      - name: Test pinned legacy Docker build
+        env:
+          DOCKER_BUILDKIT: '0'
+        run: docker build -t vk-max-staging:${{ github.sha }} .
       - name: Smoke test startup with Bothost-style bind mount
         run: |
           mkdir -p data
           docker run --rm -v "$PWD:/app" vk-max-staging:${{ github.sha }} \
             python -c "import os; from pathlib import Path; assert os.geteuid() != 0; assert Path('/opt/max2tg/app/main.py').is_file(); assert Path('/app/run_combined.py').is_file(); print('bothost bind mount smoke test passed')"
           docker run --rm -v "$PWD:/app" vk-max-staging:${{ github.sha }} \
-            python -c "import sys; sys.path.insert(0, '/opt/max2tg'); import run_bridge; from app import max_listener, dragon_notify_format; assert max_listener._header is dragon_notify_format.format_header; print('reply bridge imports and upstream patch passed')"
+            python -c "import sys; sys.path.insert(0, '/opt/max2tg'); import run_bridge; from app import max_listener, dragon_notify_format; assert max_listener._header is dragon_notify_format.format_header; assert dragon_notify_format.should_mute_max_chat(1, ' Семья ', False); assert not dragon_notify_format.should_mute_max_chat(1, 'Семья', True); print('reply bridge imports, family mute and upstream patch passed')"
