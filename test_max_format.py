@@ -1,8 +1,9 @@
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 
-from max_notify_format import format_header, message_time
-from patch_max_client import OLD_HEADER, OLD_KEYBOARD, patch_source
+from max_notify_format import format_header, message_time, should_mute_max_chat
+from patch_max_client import OLD_HEADER, OLD_KEYBOARD, OLD_READY, OLD_MESSAGE, patch_source
 
 
 class MaxFormatTests(unittest.TestCase):
@@ -30,10 +31,31 @@ class MaxFormatTests(unittest.TestCase):
         for value in (None, "", "bad", 0, -1, float("inf"), float("nan")):
             self.assertEqual(message_time(value), "")
 
+
+    def test_family_group_notifications_and_attachments_are_muted(self):
+        with patch.dict("os.environ", {"MAX_EXCLUDE_CHAT_NAMES": "Семья"}):
+            for name in ("Семья", " семья ", "СЕМЬЯ", "СеМьЯ", "Семья  "):
+                self.assertTrue(should_mute_max_chat(-123, name, False))
+            self.assertFalse(should_mute_max_chat(123, "Семья", True))
+            self.assertFalse(should_mute_max_chat(-124, "Работа", False))
+
+    def test_mute_supports_multiple_names_and_unicode_normalization(self):
+        with patch.dict("os.environ", {"MAX_EXCLUDE_CHAT_NAMES": "Семья,  Друзья"}):
+            self.assertTrue(should_mute_max_chat(5, "Друзья", False))
+            self.assertTrue(should_mute_max_chat(5, "семья", False))
+            self.assertFalse(should_mute_max_chat(5, "Семья и друзья", False))
+
+    def test_default_mutes_family_without_extra_bot_host_variable(self):
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertTrue(should_mute_max_chat(-456, "Семья", False))
+            self.assertFalse(should_mute_max_chat(-456, "Соседи", False))
+
     def test_patch_fails_closed_when_pinned_source_changes(self):
-        source = OLD_HEADER + "\n" + OLD_KEYBOARD
+        source = OLD_HEADER + "\n" + OLD_READY + "\n" + OLD_MESSAGE + "\n" + OLD_KEYBOARD
         result = patch_source(source)
         self.assertIn("format_header as _header", result)
+        self.assertIn("client.exclude_chat_ids.append(_cid)", result)
+        self.assertIn("if should_mute_max_chat(msg.chat_id", result)
         self.assertIn("else notification_keyboard(msg, sender_label, chat_label, is_dm)", result)
         with self.assertRaises(RuntimeError):
             patch_source(result)
