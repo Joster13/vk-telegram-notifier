@@ -5,6 +5,26 @@ No credentials or message state are stored here.
 """
 from datetime import datetime, timedelta, timezone
 from html import unescape
+import os
+import unicodedata
+
+def _normalize_chat_title(value):
+    return " ".join(unicodedata.normalize("NFKC", unescape(str(value or ""))).split()).casefold()
+
+
+def should_mute_max_chat(chat_id, chat_title, is_dm):
+    """Skip named MAX groups before Telegram notification or attachment forwarding.
+
+    Numeric chat IDs remain supported through MAX_EXCLUDE_CHAT_IDS.
+    Titles are normalized (case/spacing/Unicode); private DMs are unaffected.
+    """
+    if is_dm:
+        return False
+    configured = os.getenv("MAX_EXCLUDE_CHAT_NAMES", "Семья")
+    blocked = {_normalize_chat_title(name) for name in configured.split(",") if name.strip()}
+    return _normalize_chat_title(chat_title) in blocked
+
+
 
 MOSCOW = timezone(timedelta(hours=3))
 MONTHS = ("янв", "фев", "мар", "апр", "май", "июн",
