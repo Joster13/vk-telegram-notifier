@@ -1,7 +1,7 @@
 name: MAX staging validation
 on:
   push:
-    branches: [feature/max-notifications-staging, fix/bothost-entrypoint]
+    branches: [feature/max-notifications-staging, fix/bothost-entrypoint, fix/mute-max-family]
   pull_request:
     branches: [fix/bothost-entrypoint]
   workflow_dispatch:
