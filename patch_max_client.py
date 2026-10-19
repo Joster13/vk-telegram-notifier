@@ -11,7 +11,7 @@ OLD_HEADER = '''def _header(msg: MaxMessage, sender_label: str, chat_label: str,
     return f"💬 <b>{sender_label}</b>"'''
 OLD_KEYBOARD = "kb = reply_keyboard(msg.chat_id) if reply_enabled else None"
 OLD_READY = "        participant_ids = resolver.load_snapshot(snapshot)"
-OLD_MESSAGE = "    @client.on_message\\n    async def handle_message(msg: MaxMessage):\\n        log.info("
+OLD_MESSAGE = "    @client.on_message\n    async def handle_message(msg: MaxMessage):\n        log.info("
 
 
 def patch_source(source):
